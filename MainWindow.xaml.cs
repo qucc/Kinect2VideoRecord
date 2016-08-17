@@ -207,17 +207,42 @@ namespace Microsoft.Samples.Kinect.ColorBasics
 
                             this.colorBitmap.AddDirtyRect(new Int32Rect(0, 0, this.colorBitmap.PixelWidth, this.colorBitmap.PixelHeight));
                         }
-                        if (videoWriter != null)
-                        {
-                            videoWriter.WriteFrame(this.colorBitmap.BackBuffer);
-                        }
+
 
                         this.colorBitmap.Unlock();
                        
                     }
                 }
             }
+            if (videoWriter != null)
+            {
+                renderTarget.Clear();
+                renderTarget.Render(root);
+                DrawingVisual dv = new DrawingVisual();
+                using (var dc = dv.RenderOpen())
+                {
+                    dc.DrawRectangle(vb, null, new Rect(0, 0, width, height));
+                }
+                renderTarget.Render(dv);
+
+                renderTarget.CopyPixels(renderBuf, width * bytesPerPixel, 0);
+                unsafe
+                {
+                    fixed(byte* a = renderBuf)
+                    {
+                        videoWriter.WriteFrame((IntPtr)a);
+                    }
+                }
+            }
+
         }
+
+        VisualBrush vb;
+        const int width = 480;
+        const int height = 270;
+        const int bytesPerPixel = 4;
+        byte[] renderBuf = new byte[width * height * bytesPerPixel];
+        RenderTargetBitmap renderTarget = new RenderTargetBitmap(width, height, 96.0, 96.0, PixelFormats.Pbgra32);
 
         /// <summary>
         /// Handles the event which the sensor becomes unavailable (E.g. paused, closed, unplugged).
@@ -236,8 +261,12 @@ namespace Microsoft.Samples.Kinect.ColorBasics
 
         private void StartRecord_Click(object sender, RoutedEventArgs e)
         {
-            videoWriter = new VideoWriter();
+            videoWriter = new VideoWriter(480, 270, 1);
             videoWriter.StartRecord("1.wmv");
+            if (vb == null)
+            {
+                vb = new VisualBrush(root);
+            }
         }
 
         private void StopRecord_Click(object sender, RoutedEventArgs e)
@@ -247,6 +276,8 @@ namespace Microsoft.Samples.Kinect.ColorBasics
                 videoWriter.StopRecord();
                 videoWriter = null;
             }
+            videoPreview.Source = new Uri("1.wmv", UriKind.Relative);
+            videoPreview.Play();
         }
     }
 }

@@ -4,7 +4,7 @@ using namespace System;
 	public ref class VideoWriter
 	{
 	public:
-		VideoWriter();
+		VideoWriter(int width, int height, float resizeRatio);
 		void StartRecord(String^ filename);
 		void StopRecord();
 		void WriteFrame(IntPtr pImage);

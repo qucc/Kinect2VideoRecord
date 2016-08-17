@@ -4,9 +4,10 @@
 #include "VideoWriter.h"
 using namespace System::Runtime::InteropServices;
 using namespace msclr::interop;
-VideoWriter::VideoWriter()
+VideoWriter::VideoWriter(int width, int height, float resizeRatio)
 {
-	mfVideoWriter = new MFVideoWriter();
+	mfVideoWriter = new MFVideoWriter(width, height, resizeRatio);
+	
 }
 
 void VideoWriter::StartRecord(String ^ filename)

@@ -2,13 +2,16 @@
 #include "MFVideoWriter.h"
 
 
-MFVideoWriter::MFVideoWriter():
+MFVideoWriter::MFVideoWriter(int width, int height, float resizeRatio) :
 	m_pSinkWriter(NULL),
 	m_pVideoTransfrom(NULL),
 	m_pBuffer(NULL),
 	m_pResizeBuffer(NULL),
 	m_stream(0),
-	m_rtStart(0)
+	m_rtStart(0),
+	m_width(width),
+	m_height(height),
+	m_resizeRatio(resizeRatio)
 {
 }
 
@@ -24,232 +27,155 @@ MFVideoWriter::~MFVideoWriter()
 HRESULT MFVideoWriter::WriteFrame(BYTE * pImage)
 {
 	IMFSample *pSample = NULL;
-
-	const LONG cbWidth = 4 * VIDEO_WIDTH;
-	const DWORD cbBuffer = cbWidth * VIDEO_HEIGHT;
+	const LONG cbWidth = 4 * m_width;
+	const DWORD cbBuffer = cbWidth * m_height;
 
 	BYTE *pData = NULL;
-	HRESULT	hr = m_pBuffer->Lock(&pData, NULL, NULL);
-	if (SUCCEEDED(hr))
-	{
-		hr = MFCopyImage(
+	HR( m_pBuffer->Lock(&pData, NULL, NULL));
+	HR(MFCopyImage(
 			pData,                      // Destination buffer.
 			cbWidth,                    // Destination stride.
 			pImage,    // First row in source image.
 			cbWidth,                    // Source stride.
 			cbWidth,                    // Image width in bytes.
-			VIDEO_HEIGHT                // Image height in pixels.
-		);
-	}
-	m_pBuffer->Unlock();
+			m_height                // Image height in pixels.
+		));
+	HR(m_pBuffer->Unlock());
 
 	// Set the data length of the buffer.
-	if (SUCCEEDED(hr))
+	HR(m_pBuffer->SetCurrentLength(cbBuffer));
+	HR(MFCreateSample(&pSample));
+	HR( pSample->AddBuffer(m_pBuffer));
+	HR(pSample->SetSampleTime(m_rtStart));
+	HR(pSample->SetSampleDuration(VIDEO_FRAME_DURATION));
+	
+	if (m_pVideoTransfrom)
 	{
-		hr = m_pBuffer->SetCurrentLength(cbBuffer);
-	}
+		HR(m_pVideoTransfrom->ProcessInput(m_stream, pSample, 0));
+		IMFSample *pOutSample = NULL;
+		HR(MFCreateSample(&pOutSample));
+		DWORD outBufferSize = cbBuffer * m_resizeRatio * m_resizeRatio;
+		HR(m_pResizeBuffer->SetCurrentLength(outBufferSize));
+		HR(pOutSample->AddBuffer(m_pResizeBuffer));
 
-	// Create a media sample and add the buffer to the sample.
-	if (SUCCEEDED(hr))
-	{
-		hr = MFCreateSample(&pSample);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = pSample->AddBuffer(m_pBuffer);
-	}
-
-	// Set the time stamp and the duration.
-	if (SUCCEEDED(hr))
-	{
-		hr = pSample->SetSampleTime(m_rtStart);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = pSample->SetSampleDuration(VIDEO_FRAME_DURATION);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = m_pVideoTransfrom->ProcessInput(m_stream, pSample, 0);
-	}
-
-	IMFSample *pOutSample = NULL;
-	hr = MFCreateSample(&pOutSample);
-	DWORD outBufferSize = cbBuffer / 4;
-	m_pResizeBuffer->SetCurrentLength(outBufferSize);
-	hr = pOutSample->AddBuffer(m_pResizeBuffer);
-	MFT_OUTPUT_DATA_BUFFER IYUVOutputDataBuffer;
-	IYUVOutputDataBuffer.pSample = pOutSample;
-	IYUVOutputDataBuffer.dwStreamID = m_stream;
-	IYUVOutputDataBuffer.dwStatus = 0;
-	IYUVOutputDataBuffer.pEvents = NULL;
-	if (SUCCEEDED(hr))
-	{
+		MFT_OUTPUT_DATA_BUFFER IYUVOutputDataBuffer;
+		IYUVOutputDataBuffer.pSample = pOutSample;
+		IYUVOutputDataBuffer.dwStreamID = m_stream;
+		IYUVOutputDataBuffer.dwStatus = 0;
+		IYUVOutputDataBuffer.pEvents = NULL;
 		DWORD dwDSPStatus = 0;
-		hr = m_pVideoTransfrom->ProcessOutput(0, 1, &IYUVOutputDataBuffer, &dwDSPStatus);
-		hr = m_pVideoTransfrom->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
-		int b = 0;
-	}
 
-	// Send the sample to the Sink Writer.
-	if (SUCCEEDED(hr))
-	{
-		hr = m_pSinkWriter->WriteSample(m_stream, pOutSample);
-		m_rtStart += VIDEO_FRAME_DURATION;
+		HR(m_pVideoTransfrom->ProcessOutput(0, 1, &IYUVOutputDataBuffer, &dwDSPStatus));
+		HR(m_pVideoTransfrom->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0));
+
+		// Send the sample to the Sink Writer.
+		HR(m_pSinkWriter->WriteSample(m_stream, pOutSample));
+		SafeRelease(pOutSample);
 	}
-	SafeRelease(pOutSample);
+	else
+	{
+		HR(m_pSinkWriter->WriteSample(m_stream, pSample));
+	}
+	m_rtStart += VIDEO_FRAME_DURATION;
 	SafeRelease(pSample);
-	return hr;
+
+	return S_OK;
 }
 
+HRESULT CreateMediaType(UINT32 width, UINT32 height, GUID encodingFormat, IMFMediaType ** mediaType)
+{
+	HR(MFCreateMediaType(mediaType));
+	auto pMediaTypeOut = *mediaType;
+	HR(pMediaTypeOut->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
+	HR(pMediaTypeOut->SetGUID(MF_MT_SUBTYPE, encodingFormat));
+	HR(pMediaTypeOut->SetUINT32(MF_MT_AVG_BITRATE, VIDEO_BIT_RATE));
+	HR(pMediaTypeOut->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive));
+	HR(MFSetAttributeSize(pMediaTypeOut, MF_MT_FRAME_SIZE, width, height));
+	HR(MFSetAttributeRatio(pMediaTypeOut, MF_MT_FRAME_RATE, VIDEO_FPS, 1));
+	HR(MFSetAttributeRatio(pMediaTypeOut, MF_MT_PIXEL_ASPECT_RATIO, 1, 1));
+	return S_OK;
+}
 
-
-HRESULT InitializeSinkWriter(LPCWSTR filename, IMFSinkWriter **ppWriter, DWORD *pStreamIndex, IMFTransform* videoTransform)
+HRESULT InitializeSinkWriter(LPCWSTR filename, int width, int height, float resizeRatio, IMFSinkWriter **ppWriter, IMFTransform* videoTransform)
 {
 	*ppWriter = NULL;
-	*pStreamIndex = NULL;
-
 	IMFSinkWriter   *pSinkWriter = NULL;
 	IMFMediaType    *pMediaTypeOut = NULL;
 	IMFMediaType    *pMediaTypeIn = NULL;
 	IMFMediaType    *pMediaTypeInOut = NULL;
-	DWORD           streamIndex;
+	DWORD           streamIndex = 0;
 
-	HRESULT hr = MFCreateSinkWriterFromURL(filename, NULL, NULL, &pSinkWriter);
-
-	// Set the output media type.
-	if (SUCCEEDED(hr))
+	HR(CreateMediaType(width, height, MFVideoFormat_RGB32, &pMediaTypeIn));
+	HR(CreateMediaType(width * resizeRatio, height *  resizeRatio, MFVideoFormat_WMV3, &pMediaTypeOut));
+	
+	HR(MFCreateSinkWriterFromURL(filename, NULL, NULL, &pSinkWriter));
+	HR(pSinkWriter->AddStream(pMediaTypeOut, &streamIndex));
+	
+	if (videoTransform)
 	{
-		hr = MFCreateMediaType(&pMediaTypeOut);
+		HR(CreateMediaType(width * resizeRatio, height *  resizeRatio, MFVideoFormat_RGB32, &pMediaTypeInOut));
+		HR(videoTransform->SetInputType(streamIndex, pMediaTypeIn, NULL));
+		HR(videoTransform->SetOutputType(streamIndex, pMediaTypeInOut, NULL));
+		HR(pSinkWriter->SetInputMediaType(streamIndex, pMediaTypeInOut, NULL));
 	}
-	if (SUCCEEDED(hr))
+	else 
 	{
-		hr = pMediaTypeOut->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = pMediaTypeOut->SetGUID(MF_MT_SUBTYPE, VIDEO_ENCODING_FORMAT);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = pMediaTypeOut->SetUINT32(MF_MT_AVG_BITRATE, VIDEO_BIT_RATE);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = pMediaTypeOut->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = MFSetAttributeSize(pMediaTypeOut, MF_MT_FRAME_SIZE, VIDEO_WIDTH / 4, VIDEO_HEIGHT / 4);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = MFSetAttributeRatio(pMediaTypeOut, MF_MT_FRAME_RATE, VIDEO_FPS, 1);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = MFSetAttributeRatio(pMediaTypeOut, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = pSinkWriter->AddStream(pMediaTypeOut, &streamIndex);
+		HR(pSinkWriter->SetInputMediaType(streamIndex, pMediaTypeIn, NULL));
 	}
 
-	// Set the input media type.
-	if (SUCCEEDED(hr))
-	{
-		hr = MFCreateMediaType(&pMediaTypeIn);
-		hr = MFCreateMediaType(&pMediaTypeInOut);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = pMediaTypeIn->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-		hr = pMediaTypeInOut->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = pMediaTypeIn->SetGUID(MF_MT_SUBTYPE, VIDEO_INPUT_FORMAT);
-		hr = pMediaTypeInOut->SetGUID(MF_MT_SUBTYPE, VIDEO_INPUT_FORMAT);
-
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = pMediaTypeIn->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-		hr = pMediaTypeInOut->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = MFSetAttributeSize(pMediaTypeIn, MF_MT_FRAME_SIZE, VIDEO_WIDTH, VIDEO_HEIGHT);
-		hr = MFSetAttributeSize(pMediaTypeInOut, MF_MT_FRAME_SIZE, VIDEO_WIDTH / 4, VIDEO_HEIGHT / 4);
-
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = MFSetAttributeRatio(pMediaTypeIn, MF_MT_FRAME_RATE, VIDEO_FPS, 1);
-		hr = MFSetAttributeRatio(pMediaTypeInOut, MF_MT_FRAME_RATE, VIDEO_FPS, 1);
-
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = MFSetAttributeRatio(pMediaTypeIn, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
-		hr = MFSetAttributeRatio(pMediaTypeInOut, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
-
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = videoTransform->SetInputType(streamIndex, pMediaTypeIn, NULL);
-	}
-	if (SUCCEEDED(hr))
-	{
-		hr = videoTransform->SetOutputType(streamIndex, pMediaTypeInOut, NULL);
-	}
-
-	if (SUCCEEDED(hr))
-	{
-		hr = pSinkWriter->SetInputMediaType(streamIndex, pMediaTypeInOut, NULL);
-	}
-
-	// Tell the sink writer to start accepting data.
-	if (SUCCEEDED(hr))
-	{
-		hr = pSinkWriter->BeginWriting();
-	}
-
+	HR(pSinkWriter->BeginWriting());
+	
 	// Return the pointer to the caller.
-	if (SUCCEEDED(hr))
-	{
-		*ppWriter = pSinkWriter;
-		(*ppWriter)->AddRef();
-		*pStreamIndex = streamIndex;
-	}
-
+	
+	*ppWriter = pSinkWriter;
+	(*ppWriter)->AddRef();
+	
 	SafeRelease(pMediaTypeInOut);
 	SafeRelease(pSinkWriter);
 	SafeRelease(pMediaTypeOut);
 	SafeRelease(pMediaTypeIn);
-	return hr;
+	return S_OK;
+}
+
+HRESULT CreateVideoTransform(IMFTransform ** videoTransfrom)
+{
+	UINT32 count = 0;
+	IMFActivate **ppActivate = NULL;
+	HR(MFTEnumEx(
+		MFT_CATEGORY_VIDEO_PROCESSOR,
+		MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_LOCALMFT | MFT_ENUM_FLAG_SORTANDFILTER,
+		NULL,       // Input type
+		NULL,      // Output type
+		&ppActivate,
+		&count
+	));
+	HR(ppActivate[0]->ActivateObject(IID_PPV_ARGS(videoTransfrom)));
+	
+	for (UINT32 i = 0; i < count; i++)
+	{
+		ppActivate[i]->Release();
+	}
+	CoTaskMemFree(ppActivate);
+	return S_OK;
 }
 
 HRESULT MFVideoWriter::StartRecord(LPCWSTR filename)
 {
-	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-	if (SUCCEEDED(hr))
+    HR(CoInitializeEx(NULL, COINIT_APARTMENTTHREADED));
+	HR(MFStartup(MF_VERSION));
+	m_rtStart = 0;
+	HR(MFCreateMemoryBuffer(4 * m_width * m_height, &m_pBuffer));
+	if (m_resizeRatio != 1)
 	{
-		hr = MFStartup(MF_VERSION);
-		if (SUCCEEDED(hr))
-		{
-			m_rtStart = 0;
-			hr = MFCreateMemoryBuffer(4 * VIDEO_WIDTH * VIDEO_HEIGHT, &m_pBuffer);
-			hr = MFCreateMemoryBuffer(VIDEO_WIDTH * VIDEO_HEIGHT, &m_pResizeBuffer);
-			hr = CreateVideoTransform();
-			hr = InitializeSinkWriter(filename, &m_pSinkWriter, &m_stream, m_pVideoTransfrom);
-			IMFVideoProcessorControl* tronsfromControl;
-			hr = m_pVideoTransfrom->QueryInterface(&tronsfromControl);
-			MFARGB border{ 100,200,100,255 };
-			hr = tronsfromControl->SetBorderColor(&border);
-		}
+		HR(MFCreateMemoryBuffer(m_width * m_resizeRatio * m_height * m_resizeRatio * 4 , &m_pResizeBuffer));
+		HR(CreateVideoTransform(&m_pVideoTransfrom));
+		IMFVideoProcessorControl* tronsfromControl;
+		HR(m_pVideoTransfrom->QueryInterface(&tronsfromControl));
 	}
-	return hr;
+
+	HR(InitializeSinkWriter(filename,m_width, m_height, m_resizeRatio,  &m_pSinkWriter, m_pVideoTransfrom));
+
+	return S_OK;
 }
 
 HRESULT MFVideoWriter::StopRecord()
@@ -261,29 +187,5 @@ HRESULT MFVideoWriter::StopRecord()
 	SafeRelease(m_pSinkWriter);
 	MFShutdown();
 	CoUninitialize();
-	return hr;
-}
-
-HRESULT MFVideoWriter::CreateVideoTransform()
-{
-	UINT32 count = 0;
-	IMFActivate **ppActivate = NULL;
-	HRESULT hr = MFTEnumEx(
-		MFT_CATEGORY_VIDEO_PROCESSOR,
-		MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_LOCALMFT | MFT_ENUM_FLAG_SORTANDFILTER,
-		NULL,       // Input type
-		NULL,      // Output type
-		&ppActivate,
-		&count
-	);
-	if (SUCCEEDED(hr))
-	{
-		hr = ppActivate[0]->ActivateObject(IID_PPV_ARGS(&m_pVideoTransfrom));
-	}
-	for (UINT32 i = 0; i < count; i++)
-	{
-		ppActivate[i]->Release();
-	}
-	CoTaskMemFree(ppActivate);
 	return hr;
 }
