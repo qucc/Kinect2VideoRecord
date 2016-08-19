@@ -5,6 +5,7 @@ using namespace System;
 	{
 	public:
 		VideoWriter(int width, int height, float resizeRatio);
+		~VideoWriter();
 		void StartRecord(String^ filename);
 		void StopRecord();
 		void WriteFrame(IntPtr pImage);

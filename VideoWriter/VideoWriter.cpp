@@ -7,7 +7,11 @@ using namespace msclr::interop;
 VideoWriter::VideoWriter(int width, int height, float resizeRatio)
 {
 	mfVideoWriter = new MFVideoWriter(width, height, resizeRatio);
-	
+}
+
+VideoWriter::~VideoWriter()
+{
+	delete mfVideoWriter;
 }
 
 void VideoWriter::StartRecord(String ^ filename)

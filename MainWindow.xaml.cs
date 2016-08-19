@@ -207,8 +207,6 @@ namespace Microsoft.Samples.Kinect.ColorBasics
 
                             this.colorBitmap.AddDirtyRect(new Int32Rect(0, 0, this.colorBitmap.PixelWidth, this.colorBitmap.PixelHeight));
                         }
-
-
                         this.colorBitmap.Unlock();
                        
                     }
@@ -216,23 +214,8 @@ namespace Microsoft.Samples.Kinect.ColorBasics
             }
             if (videoWriter != null)
             {
-                renderTarget.Clear();
-                renderTarget.Render(root);
-                DrawingVisual dv = new DrawingVisual();
-                using (var dc = dv.RenderOpen())
-                {
-                    dc.DrawRectangle(vb, null, new Rect(0, 0, width, height));
-                }
-                renderTarget.Render(dv);
-
-                renderTarget.CopyPixels(renderBuf, width * bytesPerPixel, 0);
-                unsafe
-                {
-                    fixed(byte* a = renderBuf)
-                    {
-                        videoWriter.WriteFrame((IntPtr)a);
-                    }
-                }
+                videoWriter.WriteFrame(colorBitmap.BackBuffer);
+                
             }
 
         }
@@ -261,12 +244,9 @@ namespace Microsoft.Samples.Kinect.ColorBasics
 
         private void StartRecord_Click(object sender, RoutedEventArgs e)
         {
-            videoWriter = new VideoWriter(480, 270, 1);
+            videoWriter = new VideoWriter(1920, 1080, 1);
             videoWriter.StartRecord("1.wmv");
-            if (vb == null)
-            {
-                vb = new VisualBrush(root);
-            }
+           
         }
 
         private void StopRecord_Click(object sender, RoutedEventArgs e)
@@ -276,8 +256,8 @@ namespace Microsoft.Samples.Kinect.ColorBasics
                 videoWriter.StopRecord();
                 videoWriter = null;
             }
-            videoPreview.Source = new Uri("1.wmv", UriKind.Relative);
-            videoPreview.Play();
+            //videoPreview.Source = new Uri("1.wmv", UriKind.Relative);
+            //videoPreview.Play();
         }
     }
 }

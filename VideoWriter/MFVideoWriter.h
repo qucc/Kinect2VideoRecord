@@ -9,11 +9,12 @@
 #include <mfidl.h>
 #include <Mfreadwrite.h>
 #include <mferror.h>
+#include <comdef.h>
+#include <queue>
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "mfreadwrite")
 #pragma comment(lib, "mfplat")
 #pragma comment(lib, "mfuuid")
-
 template<class Interface>
 inline void SafeRelease(Interface *& pInterfaceToRelease)
 {
@@ -24,9 +25,9 @@ inline void SafeRelease(Interface *& pInterfaceToRelease)
 	}
 }
 class ComException {
-public :
+public:
 	HRESULT hresult;
-    ComException(const HRESULT& hr):hresult(hr)
+	ComException(const HRESULT& hr) :hresult(hr)
 	{}
 };
 
@@ -34,36 +35,48 @@ inline void HR(HRESULT hr)
 {
 	if (!SUCCEEDED(hr))
 	{
-		throw ComException(hr);
+		_com_error err(hr);
+		LPCTSTR errMsg = err.ErrorMessage();
+		throw err;
 	}
 }
-
-
-
+inline void Verify(BOOL success)
+{
+	if (!success)
+	{
+		throw success;
+	}
+}
 
 const UINT32 VIDEO_FPS = 30;
 const UINT64 VIDEO_FRAME_DURATION = 10 * 1000 * 1000 / VIDEO_FPS;
 const UINT32 VIDEO_BIT_RATE = 800000;
 //const GUID   VIDEO_ENCODING_FORMAT = MFVideoFormat_WMV3;
 //const GUID   VIDEO_INPUT_FORMAT = MFVideoFormat_RGB32;
-
+using namespace std;
+using namespace System::Diagnostics;
 class MFVideoWriter
 {
 private:
 	IMFSinkWriter*			m_pSinkWriter;
-	IMFTransform*			m_pVideoTransfrom;
-	IMFMediaBuffer*			m_pBuffer;
-	IMFMediaBuffer*			m_pResizeBuffer;
 	DWORD					m_stream;
 	LONGLONG				m_rtStart;
 	int						m_width;
 	int						m_height;
 	float					m_resizeRatio;
+	HANDLE					m_workThread;
+	HANDLE					m_workEvent;
+	CRITICAL_SECTION		m_criticalSection;
+	queue<IMFMediaBuffer*>		m_samples;
+	volatile bool			m_stillRecording;
 public:
 	MFVideoWriter(int width, int height, float resizeRatio);
 	~MFVideoWriter();
 	HRESULT					WriteFrame(BYTE* pImage);
+	void					ReadFrame();
+
 	HRESULT					StartRecord(LPCWSTR filename);
 	HRESULT					StopRecord();
+
 };
 

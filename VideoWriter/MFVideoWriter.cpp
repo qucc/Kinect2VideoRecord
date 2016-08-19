@@ -1,38 +1,41 @@
 #include "stdafx.h"
 #include "MFVideoWriter.h"
-
-
+#include <stdio.h>
+#include <ctime>
 MFVideoWriter::MFVideoWriter(int width, int height, float resizeRatio) :
 	m_pSinkWriter(NULL),
-	m_pVideoTransfrom(NULL),
-	m_pBuffer(NULL),
-	m_pResizeBuffer(NULL),
 	m_stream(0),
 	m_rtStart(0),
 	m_width(width),
 	m_height(height),
-	m_resizeRatio(resizeRatio)
+	m_resizeRatio(resizeRatio),
+	m_stillRecording(false)
 {
+
 }
 
 
 MFVideoWriter::~MFVideoWriter()
 {
 	SafeRelease(m_pSinkWriter);
-	SafeRelease(m_pVideoTransfrom);
-	SafeRelease(m_pBuffer);
-	SafeRelease(m_pResizeBuffer);
+	Verify(CloseHandle(m_workThread));
+	Verify(CloseHandle(m_workEvent));
+	DeleteCriticalSection(&m_criticalSection);
+	MFShutdown();
+	CoUninitialize();
 }
 
 HRESULT MFVideoWriter::WriteFrame(BYTE * pImage)
 {
-	IMFSample *pSample = NULL;
-	const LONG cbWidth = 4 * m_width;
-	const DWORD cbBuffer = cbWidth * m_height;
-
-	BYTE *pData = NULL;
-	HR( m_pBuffer->Lock(&pData, NULL, NULL));
-	HR(MFCopyImage(
+	if (m_stillRecording)
+	{
+		const LONG cbWidth = 4 * m_width;
+		const DWORD cbBuffer = cbWidth * m_height;
+		BYTE *pData = NULL;
+		IMFMediaBuffer* pBuffer;
+		(MFCreateMemoryBuffer(m_width * m_height * 4, &pBuffer));
+		HR(pBuffer->Lock(&pData, NULL, NULL));
+		HR(MFCopyImage(
 			pData,                      // Destination buffer.
 			cbWidth,                    // Destination stride.
 			pImage,    // First row in source image.
@@ -40,47 +43,65 @@ HRESULT MFVideoWriter::WriteFrame(BYTE * pImage)
 			cbWidth,                    // Image width in bytes.
 			m_height                // Image height in pixels.
 		));
-	HR(m_pBuffer->Unlock());
-
-	// Set the data length of the buffer.
-	HR(m_pBuffer->SetCurrentLength(cbBuffer));
-	HR(MFCreateSample(&pSample));
-	HR( pSample->AddBuffer(m_pBuffer));
-	HR(pSample->SetSampleTime(m_rtStart));
-	HR(pSample->SetSampleDuration(VIDEO_FRAME_DURATION));
-	
-	if (m_pVideoTransfrom)
-	{
-		HR(m_pVideoTransfrom->ProcessInput(m_stream, pSample, 0));
-		IMFSample *pOutSample = NULL;
-		HR(MFCreateSample(&pOutSample));
-		DWORD outBufferSize = cbBuffer * m_resizeRatio * m_resizeRatio;
-		HR(m_pResizeBuffer->SetCurrentLength(outBufferSize));
-		HR(pOutSample->AddBuffer(m_pResizeBuffer));
-
-		MFT_OUTPUT_DATA_BUFFER IYUVOutputDataBuffer;
-		IYUVOutputDataBuffer.pSample = pOutSample;
-		IYUVOutputDataBuffer.dwStreamID = m_stream;
-		IYUVOutputDataBuffer.dwStatus = 0;
-		IYUVOutputDataBuffer.pEvents = NULL;
-		DWORD dwDSPStatus = 0;
-
-		HR(m_pVideoTransfrom->ProcessOutput(0, 1, &IYUVOutputDataBuffer, &dwDSPStatus));
-		HR(m_pVideoTransfrom->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0));
-
-		// Send the sample to the Sink Writer.
-		HR(m_pSinkWriter->WriteSample(m_stream, pOutSample));
-		SafeRelease(pOutSample);
+		HR(pBuffer->Unlock());
+		// Set the data length of the buffer.
+		HR(pBuffer->SetCurrentLength(cbBuffer));
+		EnterCriticalSection(&m_criticalSection);
+		m_samples.push(pBuffer);
+		if (m_samples.size() == 1)
+		{
+			SetEvent(m_workEvent);
+		}
+		LeaveCriticalSection(&m_criticalSection);
 	}
-	else
-	{
-		HR(m_pSinkWriter->WriteSample(m_stream, pSample));
-	}
-	m_rtStart += VIDEO_FRAME_DURATION;
-	SafeRelease(pSample);
-
 	return S_OK;
 }
+
+
+static DWORD WINAPI StaticReadFrame(void* caller)
+{
+	MFVideoWriter* c = static_cast<MFVideoWriter*>(caller);
+	c->ReadFrame();
+	return 0;
+}
+
+void MFVideoWriter::ReadFrame()
+{
+	while (true)
+	{	
+		EnterCriticalSection(&m_criticalSection);
+		while (m_samples.empty())
+		{
+			LeaveCriticalSection(&m_criticalSection);
+			WaitForSingleObject(m_workEvent, INFINITE);
+			EnterCriticalSection(&m_criticalSection);
+		}
+		IMFMediaBuffer* buffer = m_samples.front();
+		m_samples.pop();
+		if (m_samples.empty())
+		{
+			ResetEvent(m_workEvent);
+		}
+		if (!m_stillRecording && m_samples.empty())
+			break;
+		LeaveCriticalSection(&m_criticalSection);
+		IMFSample*  sample;
+		HR(MFCreateSample(&sample));
+		HR(sample->AddBuffer(buffer));
+		HR(sample->SetSampleTime(m_rtStart));
+		HR(sample->SetSampleDuration(VIDEO_FRAME_DURATION));
+		m_rtStart += VIDEO_FRAME_DURATION;
+		auto start = clock();
+		HR(m_pSinkWriter->WriteSample(m_stream, sample));
+		Trace::WriteLine("time elaspd: " + (clock() - start));
+		SafeRelease(sample);
+		SafeRelease(buffer);
+	}
+	int i = 0;
+	HR(m_pSinkWriter->Finalize());
+	
+}
+
 
 HRESULT CreateMediaType(UINT32 width, UINT32 height, GUID encodingFormat, IMFMediaType ** mediaType)
 {
@@ -96,7 +117,7 @@ HRESULT CreateMediaType(UINT32 width, UINT32 height, GUID encodingFormat, IMFMed
 	return S_OK;
 }
 
-HRESULT InitializeSinkWriter(LPCWSTR filename, int width, int height, float resizeRatio, IMFSinkWriter **ppWriter, IMFTransform* videoTransform)
+HRESULT InitializeSinkWriter(LPCWSTR filename, int width, int height, float resizeRatio, IMFSinkWriter **ppWriter)
 {
 	*ppWriter = NULL;
 	IMFSinkWriter   *pSinkWriter = NULL;
@@ -111,25 +132,13 @@ HRESULT InitializeSinkWriter(LPCWSTR filename, int width, int height, float resi
 	HR(MFCreateSinkWriterFromURL(filename, NULL, NULL, &pSinkWriter));
 	HR(pSinkWriter->AddStream(pMediaTypeOut, &streamIndex));
 	
-	if (videoTransform)
-	{
-		HR(CreateMediaType(width * resizeRatio, height *  resizeRatio, MFVideoFormat_RGB32, &pMediaTypeInOut));
-		HR(videoTransform->SetInputType(streamIndex, pMediaTypeIn, NULL));
-		HR(videoTransform->SetOutputType(streamIndex, pMediaTypeInOut, NULL));
-		HR(pSinkWriter->SetInputMediaType(streamIndex, pMediaTypeInOut, NULL));
-	}
-	else 
-	{
-		HR(pSinkWriter->SetInputMediaType(streamIndex, pMediaTypeIn, NULL));
-	}
-
+	HR(pSinkWriter->SetInputMediaType(streamIndex, pMediaTypeIn, NULL));
 	HR(pSinkWriter->BeginWriting());
 	
 	// Return the pointer to the caller.
 	
 	*ppWriter = pSinkWriter;
 	(*ppWriter)->AddRef();
-	
 	SafeRelease(pMediaTypeInOut);
 	SafeRelease(pSinkWriter);
 	SafeRelease(pMediaTypeOut);
@@ -164,28 +173,20 @@ HRESULT MFVideoWriter::StartRecord(LPCWSTR filename)
     HR(CoInitializeEx(NULL, COINIT_APARTMENTTHREADED));
 	HR(MFStartup(MF_VERSION));
 	m_rtStart = 0;
-	HR(MFCreateMemoryBuffer(4 * m_width * m_height, &m_pBuffer));
-	if (m_resizeRatio != 1)
-	{
-		HR(MFCreateMemoryBuffer(m_width * m_resizeRatio * m_height * m_resizeRatio * 4 , &m_pResizeBuffer));
-		HR(CreateVideoTransform(&m_pVideoTransfrom));
-		IMFVideoProcessorControl* tronsfromControl;
-		HR(m_pVideoTransfrom->QueryInterface(&tronsfromControl));
-	}
-
-	HR(InitializeSinkWriter(filename,m_width, m_height, m_resizeRatio,  &m_pSinkWriter, m_pVideoTransfrom));
-
+	m_stillRecording = true;
+	HR(InitializeSinkWriter(filename,m_width, m_height, m_resizeRatio,  &m_pSinkWriter));
+	InitializeCriticalSection(&m_criticalSection);
+	DWORD threadId;
+	m_workThread = CreateThread(NULL, 0, StaticReadFrame, this, 0, &threadId);
+	Verify(m_workThread != NULL);
+	m_workEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	Verify(m_workEvent != NULL);
 	return S_OK;
 }
 
 HRESULT MFVideoWriter::StopRecord()
 {
-	HRESULT	hr = m_pSinkWriter->Finalize();
-	SafeRelease(m_pVideoTransfrom);
-	SafeRelease(m_pBuffer);
-	SafeRelease(m_pResizeBuffer);
-	SafeRelease(m_pSinkWriter);
-	MFShutdown();
-	CoUninitialize();
-	return hr;
+	m_stillRecording = false;
+	return S_OK;
 }
+
