@@ -99,7 +99,8 @@ void MFVideoWriter::ReadFrame()
 	}
 	int i = 0;
 	HR(m_pSinkWriter->Finalize());
-	
+	if (m_compltedCallback)
+		m_compltedCallback();
 }
 
 
@@ -188,5 +189,10 @@ HRESULT MFVideoWriter::StopRecord()
 {
 	m_stillRecording = false;
 	return S_OK;
+}
+
+void MFVideoWriter::SetCompletedCallback(void * callback)
+{
+	m_compltedCallback = static_cast<CompletedCallback>(callback);
 }
 

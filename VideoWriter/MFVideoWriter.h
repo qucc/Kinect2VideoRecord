@@ -55,6 +55,7 @@ const UINT32 VIDEO_BIT_RATE = 800000;
 //const GUID   VIDEO_INPUT_FORMAT = MFVideoFormat_RGB32;
 using namespace std;
 using namespace System::Diagnostics;
+typedef void(__stdcall *CompletedCallback)();
 class MFVideoWriter
 {
 private:
@@ -69,6 +70,8 @@ private:
 	CRITICAL_SECTION		m_criticalSection;
 	queue<IMFMediaBuffer*>		m_samples;
 	volatile bool			m_stillRecording;
+	CompletedCallback		m_compltedCallback;
+
 public:
 	MFVideoWriter(int width, int height, float resizeRatio);
 	~MFVideoWriter();
@@ -77,6 +80,7 @@ public:
 
 	HRESULT					StartRecord(LPCWSTR filename);
 	HRESULT					StopRecord();
+	void					SetCompletedCallback(void* callback);
 
 };
 

@@ -1,16 +1,20 @@
 #include "stdafx.h"
-#include <msclr\marshal.h>
-#include <msclr/marshal_cppstd.h>
 #include "VideoWriter.h"
-using namespace System::Runtime::InteropServices;
-using namespace msclr::interop;
+
+
 VideoWriter::VideoWriter(int width, int height, float resizeRatio)
 {
 	mfVideoWriter = new MFVideoWriter(width, height, resizeRatio);
+	OnCompletedDelegate^ onCompletedDelegate = gcnew OnCompletedDelegate(this, &VideoWriter::OnCompleted);
+	onCompletedDelegateHandle = GCHandle::Alloc(onCompletedDelegate, GCHandleType::Normal);
+	IntPtr callback = Marshal::GetFunctionPointerForDelegate(onCompletedDelegate);
+	marshal_context ctx;
+	mfVideoWriter->SetCompletedCallback(ctx.marshal_as<void *>(callback));
 }
 
 VideoWriter::~VideoWriter()
 {
+	onCompletedDelegateHandle.Free();
 	delete mfVideoWriter;
 }
 
@@ -28,4 +32,9 @@ void VideoWriter::StopRecord()
 void VideoWriter::WriteFrame(IntPtr pImage)
 {
 	mfVideoWriter->WriteFrame(reinterpret_cast<BYTE *>(pImage.ToPointer()));
+}
+
+void VideoWriter::OnCompleted()
+{
+	Completed(this,  System::EventArgs::Empty);
 }
