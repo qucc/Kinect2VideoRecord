@@ -8,7 +8,8 @@ MFVideoWriter::MFVideoWriter(int width, int height, float resizeRatio) :
 	m_rtStart(0),
 	m_width(width),
 	m_height(height),
-	m_resizeRatio(resizeRatio),
+	m_outputWidth(width * resizeRatio),
+	m_outputHeight(height * resizeRatio),
 	m_stillRecording(false)
 {
 
@@ -29,18 +30,19 @@ HRESULT MFVideoWriter::WriteFrame(BYTE * pImage)
 {
 	if (m_stillRecording)
 	{
-		const LONG cbWidth = 4 * m_width;
-		const DWORD cbBuffer = cbWidth * m_height;
+		const LONG stride = m_outputWidth * 4;
+		const DWORD cbBuffer = stride * m_outputHeight;
+
 		BYTE *pData = NULL;
 		IMFMediaBuffer* pBuffer;
-		(MFCreateMemoryBuffer(m_width * m_height * 4, &pBuffer));
+		(MFCreateMemoryBuffer(cbBuffer, &pBuffer));
 		HR(pBuffer->Lock(&pData, NULL, NULL));
 		HR(MFCopyImage(
 			pData,                      // Destination buffer.
-			cbWidth,                    // Destination stride.
+			stride,                    // Destination stride.
 			pImage,    // First row in source image.
-			cbWidth,                    // Source stride.
-			cbWidth,                    // Image width in bytes.
+			stride,                    // Source stride.
+			stride,                    // Image width in bytes.
 			m_height                // Image height in pixels.
 		));
 		HR(pBuffer->Unlock());
@@ -118,7 +120,7 @@ HRESULT CreateMediaType(UINT32 width, UINT32 height, GUID encodingFormat, IMFMed
 	return S_OK;
 }
 
-HRESULT InitializeSinkWriter(LPCWSTR filename, int width, int height, float resizeRatio, IMFSinkWriter **ppWriter)
+HRESULT InitializeSinkWriter(LPCWSTR filename, int width, int height, IMFSinkWriter **ppWriter)
 {
 	*ppWriter = NULL;
 	IMFSinkWriter   *pSinkWriter = NULL;
@@ -128,7 +130,7 @@ HRESULT InitializeSinkWriter(LPCWSTR filename, int width, int height, float resi
 	DWORD           streamIndex = 0;
 
 	HR(CreateMediaType(width, height, MFVideoFormat_RGB32, &pMediaTypeIn));
-	HR(CreateMediaType(width * resizeRatio, height *  resizeRatio, MFVideoFormat_WMV3, &pMediaTypeOut));
+	HR(CreateMediaType(width , height , MFVideoFormat_WMV3, &pMediaTypeOut));
 	
 	HR(MFCreateSinkWriterFromURL(filename, NULL, NULL, &pSinkWriter));
 	HR(pSinkWriter->AddStream(pMediaTypeOut, &streamIndex));
@@ -175,7 +177,7 @@ HRESULT MFVideoWriter::StartRecord(LPCWSTR filename)
 	HR(MFStartup(MF_VERSION));
 	m_rtStart = 0;
 	m_stillRecording = true;
-	HR(InitializeSinkWriter(filename,m_width, m_height, m_resizeRatio,  &m_pSinkWriter));
+	HR(InitializeSinkWriter(filename,m_outputWidth, m_outputHeight,  &m_pSinkWriter));
 	InitializeCriticalSection(&m_criticalSection);
 	DWORD threadId;
 	m_workThread = CreateThread(NULL, 0, StaticReadFrame, this, 0, &threadId);

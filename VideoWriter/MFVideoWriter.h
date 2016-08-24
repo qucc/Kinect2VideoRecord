@@ -11,6 +11,8 @@
 #include <mferror.h>
 #include <comdef.h>
 #include <queue>
+#include "opencv2/core/core.hpp"
+#include "opencv2/imgproc/imgproc.hpp"
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "mfreadwrite")
 #pragma comment(lib, "mfplat")
@@ -64,7 +66,8 @@ private:
 	LONGLONG				m_rtStart;
 	int						m_width;
 	int						m_height;
-	float					m_resizeRatio;
+	int						m_outputWidth;
+	int						m_outputHeight;
 	HANDLE					m_workThread;
 	HANDLE					m_workEvent;
 	CRITICAL_SECTION		m_criticalSection;
