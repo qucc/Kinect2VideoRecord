@@ -205,17 +205,18 @@ namespace Microsoft.Samples.Kinect.ColorBasics
                                 (uint)(colorFrameDescription.Width * colorFrameDescription.Height * 4),
                                 ColorImageFormat.Bgra);
 
+
                             this.colorBitmap.AddDirtyRect(new Int32Rect(0, 0, this.colorBitmap.PixelWidth, this.colorBitmap.PixelHeight));
                         }
                         this.colorBitmap.Unlock();
-                       
+                        if (videoWriter != null && recording)
+                        {
+                            videoWriter.WriteFrame(colorBitmap.BackBuffer);
+                        }
                     }
                 }
             }
-            if (videoWriter != null && recording)
-            {
-                videoWriter.WriteFrame(colorBitmap.BackBuffer);
-            }
+
 
         }
 
@@ -244,7 +245,7 @@ namespace Microsoft.Samples.Kinect.ColorBasics
 
         private void StartRecord_Click(object sender, RoutedEventArgs e)
         {
-            videoWriter = new VideoWriter(1920, 1080, 1);
+            videoWriter = new VideoWriter(1920, 1080, 640, 360);
             videoWriter.Completed += VideoWriter_Completed;
             videoWriter.StartRecord("1.wmv");
             recording = true;

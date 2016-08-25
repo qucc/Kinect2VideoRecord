@@ -2,9 +2,9 @@
 #include "VideoWriter.h"
 
 
-VideoWriter::VideoWriter(int width, int height, float resizeRatio)
+VideoWriter::VideoWriter(int width, int height, int outputWidth, int outputHeight)
 {
-	mfVideoWriter = new MFVideoWriter(width, height, resizeRatio);
+	mfVideoWriter = new MFVideoWriter(width, height, outputWidth, outputHeight);
 	OnCompletedDelegate^ onCompletedDelegate = gcnew OnCompletedDelegate(this, &VideoWriter::OnCompleted);
 	onCompletedDelegateHandle = GCHandle::Alloc(onCompletedDelegate, GCHandleType::Normal);
 	IntPtr callback = Marshal::GetFunctionPointerForDelegate(onCompletedDelegate);

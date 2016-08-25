@@ -93,7 +93,7 @@
       <AdditionalIncludeDirectories>E:\OpenGL\opencv\build\include</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>opencv_core2413d.lib;opencv_imgproc2413d.lib;opencv_contrib2413d.lib</AdditionalDependencies>
+      <AdditionalDependencies>opencv_core2413d.lib;opencv_imgproc2413d.lib;opencv_contrib2413d.lib;opencv_highgui2413d.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>E:\OpenGL\opencv\build\x86\vc12\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>

@@ -2,14 +2,14 @@
 #include "MFVideoWriter.h"
 #include <stdio.h>
 #include <ctime>
-MFVideoWriter::MFVideoWriter(int width, int height, float resizeRatio) :
+MFVideoWriter::MFVideoWriter(int width, int height, int outputWidth, int outputHeight) :
 	m_pSinkWriter(NULL),
 	m_stream(0),
 	m_rtStart(0),
 	m_width(width),
 	m_height(height),
-	m_outputWidth(width * resizeRatio),
-	m_outputHeight(height * resizeRatio),
+	m_outputWidth(outputWidth),
+	m_outputHeight(outputHeight),
 	m_stillRecording(false)
 {
 
@@ -30,9 +30,13 @@ HRESULT MFVideoWriter::WriteFrame(BYTE * pImage)
 {
 	if (m_stillRecording)
 	{
-		const LONG stride = m_outputWidth * 4;
-		const DWORD cbBuffer = stride * m_outputHeight;
-
+		LONG stride = m_outputWidth * 4;
+		DWORD cbBuffer = stride * m_outputHeight;
+		cv::Mat m(m_height,m_width, CV_8UC4, pImage);
+		cv::resize(m, m_smallMat, m_smallMat.size());
+		cv::line(m_smallMat, cv::Point(0, 0), cv::Point(100, 100), cv::Scalar(255), 5);
+		cv::rectangle(m_smallMat, cv::Rect(100,100,300,300), cv::Scalar(255), 5);
+		cv::threshold(m_smallMat, m_smallMat, 100, 255, 3);
 		BYTE *pData = NULL;
 		IMFMediaBuffer* pBuffer;
 		(MFCreateMemoryBuffer(cbBuffer, &pBuffer));
@@ -40,10 +44,10 @@ HRESULT MFVideoWriter::WriteFrame(BYTE * pImage)
 		HR(MFCopyImage(
 			pData,                      // Destination buffer.
 			stride,                    // Destination stride.
-			pImage,    // First row in source image.
+			m_smallMat.data,						// First row in source image.
 			stride,                    // Source stride.
 			stride,                    // Image width in bytes.
-			m_height                // Image height in pixels.
+			m_outputHeight                // Image height in pixels.
 		));
 		HR(pBuffer->Unlock());
 		// Set the data length of the buffer.
@@ -72,20 +76,21 @@ void MFVideoWriter::ReadFrame()
 	while (true)
 	{	
 		EnterCriticalSection(&m_criticalSection);
-		while (m_samples.empty())
+		while (m_samples.empty() && m_stillRecording)
 		{
 			LeaveCriticalSection(&m_criticalSection);
-			WaitForSingleObject(m_workEvent, INFINITE);
+			WaitForSingleObject(m_workEvent, 100);
 			EnterCriticalSection(&m_criticalSection);
 		}
+		if (!m_stillRecording && m_samples.empty())
+			break;
 		IMFMediaBuffer* buffer = m_samples.front();
 		m_samples.pop();
 		if (m_samples.empty())
 		{
 			ResetEvent(m_workEvent);
 		}
-		if (!m_stillRecording && m_samples.empty())
-			break;
+
 		LeaveCriticalSection(&m_criticalSection);
 		IMFSample*  sample;
 		HR(MFCreateSample(&sample));
@@ -93,14 +98,14 @@ void MFVideoWriter::ReadFrame()
 		HR(sample->SetSampleTime(m_rtStart));
 		HR(sample->SetSampleDuration(VIDEO_FRAME_DURATION));
 		m_rtStart += VIDEO_FRAME_DURATION;
-		auto start = clock();
 		HR(m_pSinkWriter->WriteSample(m_stream, sample));
-		Trace::WriteLine("time elaspd: " + (clock() - start));
 		SafeRelease(sample);
 		SafeRelease(buffer);
+		
 	}
 	int i = 0;
 	HR(m_pSinkWriter->Finalize());
+	Debug::WriteLine("done");
 	if (m_compltedCallback)
 		m_compltedCallback();
 }
@@ -179,6 +184,7 @@ HRESULT MFVideoWriter::StartRecord(LPCWSTR filename)
 	m_stillRecording = true;
 	HR(InitializeSinkWriter(filename,m_outputWidth, m_outputHeight,  &m_pSinkWriter));
 	InitializeCriticalSection(&m_criticalSection);
+	m_smallMat = cv::Mat(m_outputHeight, m_outputWidth, CV_8SC4);
 	DWORD threadId;
 	m_workThread = CreateThread(NULL, 0, StaticReadFrame, this, 0, &threadId);
 	Verify(m_workThread != NULL);

@@ -12,7 +12,7 @@ using namespace System;
 
 	public:
 		event EventHandler^ Completed;
-		VideoWriter(int width, int height, float resizeRatio);
+		VideoWriter(int width, int height, int outputWidth, int outputHeight);
 		~VideoWriter();
 		void StartRecord(String^ filename);
 		void StopRecord();

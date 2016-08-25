@@ -13,6 +13,7 @@
 #include <queue>
 #include "opencv2/core/core.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
+#include "opencv2\highgui.hpp"
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "mfreadwrite")
 #pragma comment(lib, "mfplat")
@@ -71,12 +72,13 @@ private:
 	HANDLE					m_workThread;
 	HANDLE					m_workEvent;
 	CRITICAL_SECTION		m_criticalSection;
-	queue<IMFMediaBuffer*>		m_samples;
+	queue<IMFMediaBuffer*>	m_samples;
+	cv::Mat						m_smallMat;
 	volatile bool			m_stillRecording;
 	CompletedCallback		m_compltedCallback;
 
 public:
-	MFVideoWriter(int width, int height, float resizeRatio);
+	MFVideoWriter(int width, int height, int outputWidth, int outputHeight);
 	~MFVideoWriter();
 	HRESULT					WriteFrame(BYTE* pImage);
 	void					ReadFrame();
